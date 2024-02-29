@@ -67,7 +67,11 @@ impl<'a> TransformVisitor<'a> {
 }
 
 fn escape_template_literal(input: &Atom) -> Atom {
-    input.replace("\\", "\\\\").replace("`", "\\`").replace("$", "\\$").into()
+    input
+        .replace("\\", "\\\\")
+        .replace("`", "\\`")
+        .replace("$", "\\$")
+        .into()
 }
 
 impl<'a> VisitMut for TransformVisitor<'a> {

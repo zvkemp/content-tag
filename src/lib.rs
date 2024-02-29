@@ -5,25 +5,29 @@ extern crate lazy_static;
 
 use base64::{engine::general_purpose, Engine as _};
 use std::path::PathBuf;
+use swc_common::chain;
 use swc_common::comments::SingleThreadedComments;
 use swc_common::source_map::SourceMapGenConfig;
-use swc_common::{self, sync::Lrc, FileName, SourceMap, Mark};
+use swc_common::{self, sync::Lrc, FileName, Mark, SourceMap};
 use swc_core::common::GLOBALS;
 use swc_ecma_ast::{
-    Ident, ImportDecl, ImportNamedSpecifier, ImportSpecifier, Module, ModuleDecl,
-    ModuleExportName, ModuleItem,
+    Ident, ImportDecl, ImportNamedSpecifier, ImportSpecifier, Module, ModuleDecl, ModuleExportName,
+    ModuleItem,
 };
 use swc_ecma_codegen::Emitter;
 use swc_ecma_parser::{lexer::Lexer, Parser, StringInput, Syntax, TsConfig};
-use swc_ecma_transforms::hygiene::hygiene_with_config;
+use swc_ecma_transforms::hygiene::{
+    hygiene_with_config as _hygiene_with_config, Config as HygieneConfig,
+};
 use swc_ecma_transforms::resolver;
+use swc_ecma_transforms_base::rename::renamer;
 use swc_ecma_utils::private_ident;
-use swc_ecma_visit::{as_folder, VisitMutWith, VisitWith};
+use swc_ecma_visit::{as_folder, noop_visit_mut_type, Fold, VisitMut, VisitMutWith, VisitWith};
 
 mod bindings;
+mod locate;
 mod snippets;
 mod transform;
-mod locate;
 
 #[derive(Default)]
 pub struct Options {
@@ -47,6 +51,44 @@ impl SourceMapGenConfig for SourceMapConfig {
     }
 }
 
+struct TemplateRenamer;
+
+impl swc_ecma_transforms_base::rename::Renamer for TemplateRenamer {
+    const RESET_N: bool = false;
+
+    const MANGLE: bool = false;
+
+    fn new_name_for(&self, orig: &swc_ecma_ast::Id, n: &mut usize) -> swc_atoms::JsWord {
+        println!(">>>>> {:?}", orig);
+
+        if &*orig.0 == "template" {
+            let res = if *n == 0 {
+                orig.0.clone()
+            } else {
+                format!("{}{}", orig.0, n).into()
+            };
+            *n += 1;
+
+            res
+        } else {
+            orig.0.clone()
+        }
+    }
+}
+
+struct HygieneRemover;
+
+impl VisitMut for HygieneRemover {
+    noop_visit_mut_type!();
+
+    fn visit_mut_ident(&mut self, i: &mut Ident) {
+        i.span.ctxt = Default::default();
+    }
+}
+
+fn hygiene_with_config(config: HygieneConfig) -> impl 'static + Fold + VisitMut {
+    chain!(renamer(config, TemplateRenamer), as_folder(HygieneRemover))
+}
 
 impl Preprocessor {
     pub fn new() -> Self {
@@ -281,14 +323,12 @@ fn simplify_imports(parsed_module: &mut Module) {
     }
 }
 
-
-
 #[cfg(test)]
 mod test_helpers;
 
-
 macro_rules! testcase {
     ($test_name:ident, $input:expr, $expected:expr) => {
+        #[tracing_test::traced_test]
         #[test]
         fn $test_name() -> Result<(), swc_ecma_parser::error::Error> {
             test_helpers::testcase($input, $expected)
@@ -360,4 +400,21 @@ testcase! {
          console.log(message);
          return template(`hello`, { eval() { return eval(arguments[0]) } });
        }"#
+}
+
+testcase! {
+  handles_this_parameter,
+  r#"
+    f = function(this: Context, ...args) {
+        function t(this: Context, ...args) {};
+        <template></template>
+    };
+  "#,
+  r#"
+    import { template } from "@ember/template-compiler";
+    f = function(this: Context, ...args) {
+        function t(this: Context, ...args) {};
+        template(``, { eval() { return eval(arguments[0])} });
+    };
+  "#
 }

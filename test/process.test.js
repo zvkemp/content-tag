@@ -48,6 +48,30 @@ describe(`process`, function () {
     );
   });
 
+  it("ignores typescript `this` parameters", function () {
+    console.log("hello");
+    let output = p.process(`
+    f = function(this: Context, ...args) {
+        function t(this: Context, ...args) {}
+        <template></template>
+    }`);
+
+    console.log(output);
+    // codeEqual does not yet include a typescript plugin
+    expect(output).to.equal(
+      `import { template } from "@ember/template-compiler";
+f = function(this: Context, ...args) {
+    function t(this: Context, ...args) {}
+    template(\`\`, {
+        eval () {
+            return eval(arguments[0]);
+        }
+    });
+};
+`
+    );
+  });
+
   it("Emits parse errors with anonymous file", function () {
     expect(function () {
       p.process(`const thing = "face";
@@ -91,7 +115,9 @@ describe(`process`, function () {
   });
 
   it("Provides inline source maps if inline_source_map option is set to true", function () {
-    let output = p.process(`<template>Hi</template>`, { inline_source_map: true });
+    let output = p.process(`<template>Hi</template>`, {
+      inline_source_map: true,
+    });
 
     expect(output).to.match(
       /sourceMappingURL=data:application\/json;base64,eyJ2ZXJzaW9uIjozLCJzb3VyY2VzIjpbIjxhbm9uPiJdLCJzb3VyY2VzQ29udGVudCI6WyI8dGVtcGxhdGU-SGk8L3RlbXBsYXRlPiJdLCJuYW1lcyI6W10sIm1hcHBpbmdzIjoiO0FBQUEsZUFBQSxTQUFVLENBQUEsRUFBRSxDQUFBLEVBQUE7SUFBQTtRQUFBLE9BQUEsS0FBQSxTQUFBLENBQUEsRUFBVztJQUFEO0FBQUEsR0FBQyJ9/
